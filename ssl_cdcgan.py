@@ -8,12 +8,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
+from torchvision.utils import save_image
 from torch.autograd import Variable
 
 # G(z)
 latent_dim = 100
-ngf = 128
-ndf = 128
+ngf = 32
+ndf = 32
 num_channels = 3
 num_classes = 1000
 class generator(nn.Module):
@@ -85,86 +86,19 @@ def normal_init(m, mean, std):
         m.weight.data.normal_(mean, std)
         m.bias.data.zero_()
 
-print("defined stuff")
-
-latent_dim = 100
-num_classes = 1000
-# fixed noise & label
-'''
-temp_z_ = torch.randn(num_classes, latent_dim)
-fixed_z_ = temp_z_
-fixed_y_ = torch.zeros(num_classes, 1)
-for i in range(num_classes-1):
-    fixed_z_ = torch.cat([fixed_z_, temp_z_], 0)
-    temp = torch.ones(num_classes, 1) + i
-    fixed_y_ = torch.cat([fixed_y_, temp], 0)
-
-print("fz shaped: ", fixed_z_.shape)
-print("fy shaped: ", fixed_y_.shape)
-fixed_z_ = fixed_z_.view(-1, latent_dim, 1, 1)
-print("after view fz shaped: ", fixed_z_.shape)
-fixed_y_label_ = torch.zeros(num_classes**2, num_classes)
-fixed_y_label_.scatter_(1, fixed_y_.type(torch.LongTensor), 1)
-fixed_y_label_ = fixed_y_label_.view(-1, num_classes, 1, 1)
-fixed_z_, fixed_y_label_ = Variable(fixed_z_.cuda(), volatile=True), Variable(fixed_y_label_.cuda(), volatile=True)
-def show_result(num_epoch, show = False, save = False, path = 'result.png'):
-
-    G.eval()
-    test_images = G(fixed_z_, fixed_y_label_)
-    G.train()
-
-    size_figure_grid = 10
-    fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5))
-    for i, j in itertools.product(range(size_figure_grid), range(size_figure_grid)):
-        ax[i, j].get_xaxis().set_visible(False)
-        ax[i, j].get_yaxis().set_visible(False)
-
-    for k in range(10*10):
-        i = k // 10
-        j = k % 10
-        ax[i, j].cla()
-        ax[i, j].imshow(test_images[k, 0].cpu().data.numpy(), cmap='gray')
-
-    label = 'Epoch {0}'.format(num_epoch)
-    fig.text(0.5, 0.04, label, ha='center')
-    plt.savefig(path)
-
-    if show:
-        plt.show()
-    else:
-        plt.close()
-'''
-
-def show_train_hist(hist, show = False, save = False, path = 'Train_hist.png'):
-    x = range(len(hist['D_losses']))
-
-    y1 = hist['D_losses']
-    y2 = hist['G_losses']
-
-    plt.plot(x, y1, label='D_loss')
-    plt.plot(x, y2, label='G_loss')
-
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-
-    plt.legend(loc=4)
-    plt.grid(True)
-    plt.tight_layout()
-
-    if save:
-        plt.savefig(path)
-
-    if show:
-        plt.show()
-    else:
-        plt.close()
+# program params
+MODEL_CHECKPOINT = 2
+LEARNING_RATE_UPDATE = 8
+IMAGE_SAVE_INTERVAL = 1000
 
 # training parameters
-batch_size = 8
+batch_size = 16
 lr = 0.0002
-train_epoch = 20
-ngf = 4
-ndf = 4
+train_epoch = 30 
+ngf = 32
+ndf = 32
+latent_dim = 100
+num_classes = 1000
 
 # data_loader
 img_size = 64
@@ -174,12 +108,21 @@ transform = transforms.Compose([
         transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 ])
 
+data_root = "/scratch/ks4883/dl_data/supervised/train"
+raw_data = datasets.ImageFolder(data_root, transform=transform)
+classes, classes_to_idx = raw_data._find_classes(data_root)
+idx_to_class = {}
+for class_name in classes_to_idx:
+    index = classes_to_idx[class_name]
+    idx_to_class[index] = class_name
+print("num classes: ", len(classes))
+
 train_loader = torch.utils.data.DataLoader(
-    datasets.ImageFolder("/home/thekingh/final_projects/gans/dl_data/supervised/train", transform=transform),
+    raw_data,
     batch_size=batch_size,
     shuffle=True,
 )
-print("loaded data, batch len=", len(train_loader))
+print("loaded data, num batches=", len(train_loader), ", batch_size=", batch_size)
 
 # network
 print("about to make nets")
@@ -199,12 +142,15 @@ G_optimizer = optim.Adam(G.parameters(), lr=lr, betas=(0.5, 0.999))
 D_optimizer = optim.Adam(D.parameters(), lr=lr, betas=(0.5, 0.999))
 
 # results save folder
-root = 'ssLresults/'
+root = 'gen_img'
 model = 'SSL_'
+
 if not os.path.isdir(root):
     os.mkdir(root)
-if not os.path.isdir(root + 'Fixed_results'):
-    os.mkdir(root + 'Fixed_results')
+
+model_dir = 'saved_models'
+if not os.path.isdir(model_dir):
+    os.mkdir(model_dir)
 
 train_hist = {}
 train_hist['D_losses'] = []
@@ -221,6 +167,34 @@ fill = torch.zeros([num_classes, num_classes, img_size, img_size])
 for i in range(num_classes):
     fill[i, i, :, :] = 1
 
+def generate_images(epoch, num_batches):
+    
+    # generate images in batches of size 10
+    gen_batch_size = 10
+    batch_first_label = 0
+    batch_last_label = batch_first_label + gen_batch_size
+
+    for i in range(100):
+        fake_ys = torch.LongTensor(list(range(batch_first_label, batch_last_label))).squeeze()
+        fake_y_labels = onehot[fake_ys]
+        fake_y_labels = Variable(fake_y_labels.cuda())
+        z = torch.randn((gen_batch_size, latent_dim)).view(-1, latent_dim, 1, 1)
+        z = Variable(z.cuda())
+        
+        generated_imgs = G(z, fake_y_labels)
+        
+        for num_label, img in zip(fake_ys, generated_imgs):
+            class_label = idx_to_class[num_label.item()]
+
+            root = "gen_img/"
+            if not os.path.exists(root+class_label):
+                os.mkdir(root+class_label)
+
+            save_image(img.data, "gen_img/{0}/{0}_{1}_{2}.png".format(class_label, epoch, num_batches))
+
+        batch_first_label += gen_batch_size
+        batch_last_label += gen_batch_size
+
 print('>training start')
 start_time = time.time()
 for epoch in range(train_epoch):
@@ -228,21 +202,25 @@ for epoch in range(train_epoch):
     G_losses = []
 
     # learning rate decay
-    if (epoch+1) == 11:
+    if epoch >= 10 and epoch % LEARNING_RATE_UPDATE == 0:
         G_optimizer.param_groups[0]['lr'] /= 10
         D_optimizer.param_groups[0]['lr'] /= 10
         print(">learning rate change!")
 
-    if (epoch+1) == 16:
-        G_optimizer.param_groups[0]['lr'] /= 10
-        D_optimizer.param_groups[0]['lr'] /= 10
-        print(">learning rate change!")
+    # model checkpointing
+    if epoch > 0 and epoch % MODEL_CHECKPOINT == 0:
+        os.mkdir(model_dir + '/{0}'.format(epoch))
+        torch.save(G.state_dict(), model_dir+'/e{0}/g{0}.pth'.format(epoch))
+        torch.save(D.state_dict(), model_dir+'/e{0}/d{0}.pth'.format(epoch))
 
+    num_batches = 0
     epoch_start_time = time.time()
     y_real_ = torch.ones(batch_size)
     y_fake_ = torch.zeros(batch_size)
     y_real_, y_fake_ = Variable(y_real_.cuda()), Variable(y_fake_.cuda())
+
     for x_, y_ in train_loader:
+        num_batches += 1
         # train discriminator D
         D.zero_grad()
 
@@ -257,7 +235,7 @@ for epoch in range(train_epoch):
         x_, y_fill_ = Variable(x_.cuda()), Variable(y_fill_.cuda())
 
         D_result = D(x_, y_fill_).squeeze()
-        D_real_los = BCE_loss(D_result, y_real_)
+        D_real_loss = BCE_loss(D_result, y_real_)
 
         z_ = torch.randn((mini_batch, latent_dim)).view(-1, latent_dim, 1, 1)
         y_ = (torch.rand(mini_batch, 1) * num_classes).type(torch.LongTensor).squeeze()
@@ -297,6 +275,9 @@ for epoch in range(train_epoch):
 
         G_losses.append(G_train_loss.data.item())
 
+        if num_batches % IMAGE_SAVE_INTERVAL == 0:
+            generate_images(epoch, num_batches)
+
     epoch_end_time = time.time()
     per_epoch_ptime = epoch_end_time - epoch_start_time
 
@@ -313,12 +294,15 @@ total_ptime = end_time - start_time
 train_hist['total_ptime'].append(total_ptime)
 
 print("Avg one epoch ptime: %.2f, total %d epochs ptime: %.2f" % (torch.mean(torch.FloatTensor(train_hist['per_epoch_ptimes'])), train_epoch, total_ptime))
+
 print("Training finish!... save training results")
-torch.save(G.state_dict(), 'g.pth')
-torch.save(D.state_dict(), 'd.pth')
-with open(root + model + 'train_hist.pkl', 'wb') as f:
+torch.save(G.state_dict(), 'g_final.pth')
+torch.save(D.state_dict(), 'd_final.pth')
+
+with open('train_hist.pkl', 'wb') as f:
     pickle.dump(train_hist, f)
 
+'''
 show_train_hist(train_hist, save=True, path=root + model + 'train_hist.png')
 
 images = []
@@ -326,3 +310,4 @@ for e in range(train_epoch):
     img_name = root + 'Fixed_results/' + model + str(e + 1) + '.png'
     images.append(imageio.imread(img_name))
 imageio.mimsave(root + model + 'generation_animation.gif', images, fps=5)
+'''
