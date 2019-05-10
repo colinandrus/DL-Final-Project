@@ -13,8 +13,8 @@ from torch.autograd import Variable
 
 # G(z)
 latent_dim = 100
-ngf = 32
-ndf = 32
+ngf = 64
+ndf = 64
 num_channels = 3
 num_classes = 1000
 class generator(nn.Module):
@@ -92,11 +92,11 @@ LEARNING_RATE_UPDATE = 8
 IMAGE_SAVE_INTERVAL = 1000
 
 # training parameters
-batch_size = 16
+batch_size = 32
 lr = 0.0002
 train_epoch = 30 
-ngf = 32
-ndf = 32
+ngf = 64
+ndf = 64
 latent_dim = 100
 num_classes = 1000
 
@@ -128,8 +128,19 @@ print("loaded data, num batches=", len(train_loader), ", batch_size=", batch_siz
 print("about to make nets")
 G = generator(ngf)
 D = discriminator(ndf)
-G.weight_init(mean=0.0, std=0.02)
-D.weight_init(mean=0.0, std=0.02)
+
+if os.path.exists("g4.pth"):
+    G.load_state_dict(torch.load("g2.pth"))
+    print("loaded G weights from checkpoint")
+else:
+    G.weight_init(mean=0.0, std=0.02)
+
+if os.path.exists("d4.pth"):
+    D.load_state_dict(torch.load("d2.pth"))
+    print("loaded D weights from checkpoint")
+else:
+    D.weight_init(mean=0.0, std=0.02)
+
 G.cuda()
 D.cuda()
 print("moved nets to cuda")
@@ -142,7 +153,7 @@ G_optimizer = optim.Adam(G.parameters(), lr=lr, betas=(0.5, 0.999))
 D_optimizer = optim.Adam(D.parameters(), lr=lr, betas=(0.5, 0.999))
 
 # results save folder
-root = 'gen_img'
+root = 'gen_img2'
 model = 'SSL_'
 
 if not os.path.isdir(root):
@@ -169,12 +180,13 @@ for i in range(num_classes):
 
 def generate_images(epoch, num_batches):
     
-    # generate images in batches of size 10
-    gen_batch_size = 10
+    # generate images in batches of size 40
+    gen_batch_size = 40
     batch_first_label = 0
     batch_last_label = batch_first_label + gen_batch_size
+    num_gen_batches = int(num_classes/gen_batch_size)
 
-    for i in range(100):
+    for i in range(num_gen_batches):
         fake_ys = torch.LongTensor(list(range(batch_first_label, batch_last_label))).squeeze()
         fake_y_labels = onehot[fake_ys]
         fake_y_labels = Variable(fake_y_labels.cuda())
@@ -186,11 +198,11 @@ def generate_images(epoch, num_batches):
         for num_label, img in zip(fake_ys, generated_imgs):
             class_label = idx_to_class[num_label.item()]
 
-            root = "gen_img/"
+            root = "gen_img2/"
             if not os.path.exists(root+class_label):
                 os.mkdir(root+class_label)
 
-            save_image(img.data, "gen_img/{0}/{0}_{1}_{2}.png".format(class_label, epoch, num_batches))
+            save_image(img.data, "gen_img2/{0}/{0}_{1}_{2}.png".format(class_label, epoch, num_batches))
 
         batch_first_label += gen_batch_size
         batch_last_label += gen_batch_size
@@ -209,9 +221,11 @@ for epoch in range(train_epoch):
 
     # model checkpointing
     if epoch > 0 and epoch % MODEL_CHECKPOINT == 0:
-        os.mkdir(model_dir + '/{0}'.format(epoch))
-        torch.save(G.state_dict(), model_dir+'/e{0}/g{0}.pth'.format(epoch))
-        torch.save(D.state_dict(), model_dir+'/e{0}/d{0}.pth'.format(epoch))
+        #os.mkdir(model_dir + '/epoch_{0}'.format(epoch))
+        #torch.save(G.state_dict(), model_dir+'/epoch_{0}/g{0}.pth'.format(epoch))
+        #torch.save(D.state_dict(), model_dir+'/epoch_{0}/d{0}.pth'.format(epoch))
+        torch.save(G.state_dict(), 'g{0}_2.pth'.format(epoch))
+        torch.save(D.state_dict(), 'd{0}_2.pth'.format(epoch))
 
     num_batches = 0
     epoch_start_time = time.time()
@@ -278,6 +292,9 @@ for epoch in range(train_epoch):
         if num_batches % IMAGE_SAVE_INTERVAL == 0:
             generate_images(epoch, num_batches)
 
+            with open('train_hist_2.pkl', 'wb') as f:
+                pickle.dump(train_hist, f)
+
     epoch_end_time = time.time()
     per_epoch_ptime = epoch_end_time - epoch_start_time
 
@@ -296,10 +313,10 @@ train_hist['total_ptime'].append(total_ptime)
 print("Avg one epoch ptime: %.2f, total %d epochs ptime: %.2f" % (torch.mean(torch.FloatTensor(train_hist['per_epoch_ptimes'])), train_epoch, total_ptime))
 
 print("Training finish!... save training results")
-torch.save(G.state_dict(), 'g_final.pth')
-torch.save(D.state_dict(), 'd_final.pth')
+torch.save(G.state_dict(), 'g_final_2.pth')
+torch.save(D.state_dict(), 'd_final_2.pth')
 
-with open('train_hist.pkl', 'wb') as f:
+with open('train_hist_2.pkl', 'wb') as f:
     pickle.dump(train_hist, f)
 
 '''
