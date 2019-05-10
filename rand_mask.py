@@ -1,3 +1,6 @@
+import torch.nn as nn
+import numpy.random as random
+
 class RandomMasking(nn.Module):
     
     def __init__(self, mask_size=100):
